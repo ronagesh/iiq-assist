@@ -51,6 +51,10 @@
   gap: 24px;
 }
 
+.app-main--chat {
+  padding: 16px 16px 16px;
+}
+
 /* ── Hero ────────────────────────────────── */
 .hero-section {
   display: flex;
@@ -205,7 +209,59 @@
   transform: none;
 }
 
-/* ── Response section ────────────────────── */
+/* ── Conversation thread ─────────────────── */
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 8px;
+}
+
+/* ── Follow-up bar ───────────────────────── */
+.followup-bar {
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+  border-top: 1px solid #e8edf2;
+  padding: 10px 16px 14px;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom));
+}
+
+.followup-form {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.followup-input {
+  flex: 1;
+  background: #f0f4f8;
+  border: none;
+  border-radius: 22px;
+  padding: 11px 16px;
+  font-size: 15px;
+  font-family: inherit;
+  color: #0d1117;
+  outline: none;
+  transition: background 0.15s;
+}
+
+.followup-input:focus {
+  background: #e8eef5;
+}
+
+.followup-input::placeholder {
+  color: #94a3b8;
+}
+
+/* question text inside agent bubble */
+.followup-question {
+  margin: 0;
+  color: #1e293b;
+  line-height: 1.55;
+}
+
+/* ── Response section (legacy compat) ────── */
 .response-section {
   display: flex;
   flex-direction: column;
