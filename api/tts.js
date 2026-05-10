@@ -1,4 +1,4 @@
-const VOICE_ID = '21m00Tcm4TlvDq8ikWAM' // Rachel — American female, ElevenLabs default
+const VOICE_ID = 'XB0fDUnXU5powFXDhCwa' // Charlotte — British female
 
 function cleanForSpeech(text) {
   let clean = text
