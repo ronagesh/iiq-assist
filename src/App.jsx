@@ -1,8 +1,6 @@
 import { useState, useRef } from 'react'
 import './App.css'
 
-const BRAND_BLUE = '#0066CC'
-
 const SYSTEM_PROMPT = `You are iiQ Assist, an AI IT support agent for K-12 schools. When given a description and photo of a problem, diagnose it confidently and either: (1) provide clear step-by-step resolution instructions in plain language a non-technical teacher can follow, or (2) if the issue requires physical intervention, say you're creating a ticket and return a structured ticket with: issue summary, device type, priority (low/medium/high/urgent), recommended action, estimated resolution time. Be warm, fast, and confident. Common issues and resolutions: Chromebook won't turn on — hard reset hold power 10 seconds, check charger; Google login error — device not authorized, needs IT admin; WiFi not connecting — forget and rejoin network; Smartboard no signal — check HDMI cable, cycle Source button; Projector not displaying — check HDMI, press Source, restart; iPad not on network — check MDM profile.
 
 IMPORTANT: When you create a ticket, respond with ONLY valid JSON in this exact format (no markdown, no extra text):
@@ -214,12 +212,12 @@ export default function App() {
     <div className="app-container">
       {/* Header */}
       <header className="app-header">
-        <div className="logo-mark">
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-            <rect width="28" height="28" rx="8" fill={BRAND_BLUE} />
-            <text x="5" y="21" fontSize="16" fill="white" fontWeight="700" fontFamily="-apple-system,sans-serif">iQ</text>
-          </svg>
-        </div>
+        <img
+          src="https://www.schooldataleadership.org/media/reviews/photos/original/5c/b8/87/incidentiq-34-1573848994.png"
+          alt="Incident IQ"
+          className="header-logo"
+        />
+        <span className="header-divider" />
         <span className="logo-text">iiQ Assist</span>
       </header>
 
@@ -228,10 +226,11 @@ export default function App() {
         {!hasResponse && !loading && (
           <div className="hero-section">
             <div className="hero-avatar">
-              <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                <rect width="48" height="48" rx="14" fill={BRAND_BLUE} />
-                <text x="8" y="34" fontSize="26" fill="white" fontWeight="700" fontFamily="-apple-system,sans-serif">iQ</text>
-              </svg>
+              <img
+                src="https://www.schooldataleadership.org/media/reviews/photos/original/5c/b8/87/incidentiq-34-1573848994.png"
+                alt="Incident IQ"
+                className="hero-logo"
+              />
             </div>
             <h1 className="hero-title">Hi, I'm your AI IT support agent.</h1>
             <p className="hero-subtitle">What's the issue today?</p>
@@ -252,10 +251,11 @@ export default function App() {
             {loading && (
               <div className="message-agent">
                 <div className="agent-avatar-sm">
-                  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                    <rect width="32" height="32" rx="9" fill={BRAND_BLUE} />
-                    <text x="5" y="23" fontSize="15" fill="white" fontWeight="700" fontFamily="-apple-system,sans-serif">iQ</text>
-                  </svg>
+                  <img
+                    src="https://www.schooldataleadership.org/media/reviews/photos/original/5c/b8/87/incidentiq-34-1573848994.png"
+                    alt="iiQ"
+                    className="avatar-logo"
+                  />
                 </div>
                 <div className="bubble-agent loading-bubble">
                   <span className="dot" /><span className="dot" /><span className="dot" />
@@ -266,10 +266,11 @@ export default function App() {
             {response && (
               <div className="message-agent">
                 <div className="agent-avatar-sm">
-                  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                    <rect width="32" height="32" rx="9" fill={BRAND_BLUE} />
-                    <text x="5" y="23" fontSize="15" fill="white" fontWeight="700" fontFamily="-apple-system,sans-serif">iQ</text>
-                  </svg>
+                  <img
+                    src="https://www.schooldataleadership.org/media/reviews/photos/original/5c/b8/87/incidentiq-34-1573848994.png"
+                    alt="iiQ"
+                    className="avatar-logo"
+                  />
                 </div>
                 <div className="bubble-agent">
                   <StepList text={response} />
@@ -280,10 +281,11 @@ export default function App() {
             {ticket && (
               <div className="message-agent">
                 <div className="agent-avatar-sm">
-                  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                    <rect width="32" height="32" rx="9" fill={BRAND_BLUE} />
-                    <text x="5" y="23" fontSize="15" fill="white" fontWeight="700" fontFamily="-apple-system,sans-serif">iQ</text>
-                  </svg>
+                  <img
+                    src="https://www.schooldataleadership.org/media/reviews/photos/original/5c/b8/87/incidentiq-34-1573848994.png"
+                    alt="iiQ"
+                    className="avatar-logo"
+                  />
                 </div>
                 <div className="bubble-agent ticket-bubble">
                   <p className="ticket-intro">

@@ -22,16 +22,24 @@
   z-index: 10;
 }
 
-.logo-mark {
-  display: flex;
-  align-items: center;
+.header-logo {
+  height: 28px;
+  width: auto;
+  object-fit: contain;
+}
+
+.header-divider {
+  width: 1px;
+  height: 20px;
+  background: #d1dae4;
+  flex-shrink: 0;
 }
 
 .logo-text {
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 600;
   color: #0066CC;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.2px;
 }
 
 /* ── Main ────────────────────────────────── */
@@ -55,6 +63,12 @@
 
 .hero-avatar {
   margin-bottom: 8px;
+}
+
+.hero-logo {
+  height: 52px;
+  width: auto;
+  object-fit: contain;
 }
 
 .hero-title {
@@ -242,6 +256,23 @@
 .agent-avatar-sm {
   flex-shrink: 0;
   margin-top: 2px;
+  width: 32px;
+  height: 32px;
+  background: #fff;
+  border-radius: 9px;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+.avatar-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .bubble-agent {
