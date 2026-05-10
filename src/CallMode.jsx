@@ -150,25 +150,28 @@ export default function CallMode({ onExit }) {
   }
 
   async function prefetchTTS(text) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8000)
     try {
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
+        signal: controller.signal,
       })
+      clearTimeout(timeout)
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         console.warn('TTS error:', res.status, err.error)
-        throw new Error(err.error || 'TTS failed')
+        return
       }
       const blob = new Blob([await res.arrayBuffer()], { type: 'audio/mpeg' })
       if (pendingAudioUrl.current) URL.revokeObjectURL(pendingAudioUrl.current)
       pendingAudioUrl.current = URL.createObjectURL(blob)
     } catch (e) {
-      console.warn('prefetchTTS failed, will use browser TTS:', e.message)
-      // Will fall back to browser TTS on play
-    } finally {
-      setTtsReady(true)
+      clearTimeout(timeout)
+      console.warn('prefetchTTS failed:', e.message)
+      // pendingAudioUrl stays null — handlePlayStep falls back to browser TTS
     }
   }
 
@@ -186,8 +189,7 @@ export default function CallMode({ onExit }) {
     const seg = segs[idx]
     const stepCount = segs.filter(s => s.type === 'step').length
     setSegPos({ idx, total: segs.length, type: seg.type, stepNum: seg.stepNum, stepCount })
-    // If pre-fetch already completed while playing the previous segment, ttsReady should be true
-    setTtsReady(pendingAudioUrl.current !== null)
+    setTtsReady(true)  // always show Play immediately; audio may or may not be pre-loaded
     setPhase('ready')
   }
 
@@ -200,10 +202,9 @@ export default function CallMode({ onExit }) {
 
     setPhase('speaking')
 
-    // Pre-fetch next segment immediately so it's ready when this one ends
+    // Best-effort pre-fetch of next segment while this one plays
     const nextIdx = idx + 1
     if (nextIdx < segs.length) {
-      setTtsReady(false)
       prefetchTTS(segs[nextIdx].ttsText)
     }
 
@@ -261,10 +262,10 @@ export default function CallMode({ onExit }) {
       const seg = segs[0]
       const stepCount = segs.filter(s => s.type === 'step').length
       setSegPos({ idx: 0, total: segs.length, type: seg.type, stepNum: seg.stepNum, stepCount })
-      setTtsReady(false)
+      setTtsReady(true)   // show Play immediately; ElevenLabs pre-fetch is best-effort
       setPhase('ready')
 
-      // Pre-fetch first segment's audio
+      // Best-effort TTS pre-fetch — if ready by tap time, great; otherwise browser TTS
       prefetchTTS(seg.ttsText)
     } catch (err) {
       clearTimeout(timeout)
