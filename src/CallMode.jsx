@@ -2,20 +2,6 @@ import { useState, useRef, useEffect } from 'react'
 
 const LOGO_URL = 'https://www.schooldataleadership.org/media/reviews/photos/original/5c/b8/87/incidentiq-34-1573848994.png'
 
-function makeSilentWavBlob() {
-  const sr = 8000, n = 800   // 100ms @ 8 kHz
-  const buf = new ArrayBuffer(44 + n * 2)
-  const v = new DataView(buf)
-  const w = (s, o) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)))
-  w('RIFF', 0); v.setUint32(4, 36 + n * 2, true)
-  w('WAVE', 8); w('fmt ', 12); v.setUint32(16, 16, true)
-  v.setUint16(20, 1, true); v.setUint16(22, 1, true)
-  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true)
-  v.setUint16(32, 2, true); v.setUint16(34, 16, true)
-  w('data', 36); v.setUint32(40, n * 2, true)
-  return new Blob([buf], { type: 'audio/wav' })
-}
-
 function stripMarkdown(text) {
   return text
     .replace(/\*\*(.*?)\*\*/g, '$1')
@@ -58,34 +44,28 @@ export default function CallMode({ onExit }) {
   const transcriptRef  = useRef('')
   const frameRef       = useRef(null)
   const pressingRef    = useRef(false)
-  const audioCtxRef    = useRef(null)   // created lazily in gesture
-  const ctxSourceRef   = useRef(null)
-  const audioElRef     = useRef(null)   // <audio> in JSX
-  const silentUrlRef   = useRef(null)
+  const audioElRef     = useRef(null)
+  const pendingAudioUrl = useRef(null)   // pre-fetched blob URL, ready to play on tap
+  const pendingSpoken   = useRef(null)   // text for fallback TTS
   const messagesRef    = useRef([])
 
   const [phase, setPhase]             = useState('idle')
   const [transcript, setTranscript]   = useState('')
   const [displayText, setDisplayText] = useState("Hold the button and tell me what's going on — I can see what your camera sees.")
+  const [ttsReady, setTtsReady]       = useState(false)
   const [camError, setCamError]       = useState(null)
 
   useEffect(() => {
-    silentUrlRef.current = URL.createObjectURL(makeSilentWavBlob())
-
     async function init() {
-      // Request camera + mic together so the permission dialog fires here,
-      // not during the first PTT press. Mic permission also covers SR.
       try {
         const s = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
           audio: true,
         })
-        // We only needed the permission; stop the audio track immediately
         s.getAudioTracks().forEach(t => t.stop())
         streamRef.current = s
         if (videoRef.current) videoRef.current.srcObject = s
       } catch {
-        // Mic denied — fall back to video-only (SR will prompt separately, but camera works)
         try {
           const s = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
@@ -103,9 +83,8 @@ export default function CallMode({ onExit }) {
     return () => {
       streamRef.current?.getTracks().forEach(t => t.stop())
       window.speechSynthesis?.cancel()
-      ctxSourceRef.current?.stop()
-      audioCtxRef.current?.close()
-      if (silentUrlRef.current) URL.revokeObjectURL(silentUrlRef.current)
+      if (audioElRef.current) { audioElRef.current.pause(); audioElRef.current.src = '' }
+      if (pendingAudioUrl.current) URL.revokeObjectURL(pendingAudioUrl.current)
       recognitionRef.current?.abort()
     }
   }, [])
@@ -123,66 +102,69 @@ export default function CallMode({ onExit }) {
     try { return canvas.toDataURL('image/jpeg', 0.8).split(',')[1] } catch { return null }
   }
 
-  async function speakText(text, onEnd) {
+  // Pre-fetch TTS in the background so audio is ready when user taps Play
+  async function prefetchTTS(text) {
     try {
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       })
-      if (!res.ok) throw new Error('TTS request failed')
-      const arrayBuffer = await res.arrayBuffer()
-
-      // Try AudioContext first (best quality, handles MP3 natively)
-      const ctx = audioCtxRef.current
-      if (ctx) {
-        await ctx.resume()
-        if (ctx.state === 'running') {
-          const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0))
-          const source = ctx.createBufferSource()
-          source.buffer = decoded
-          source.connect(ctx.destination)
-          source.onended = onEnd
-          ctxSourceRef.current = source
-          source.start(0)
-          return
-        }
-      }
-
-      // AudioContext suspended/unavailable — try HTML5 audio element
-      const audioEl = audioElRef.current
-      if (audioEl) {
-        const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' })
-        const url = URL.createObjectURL(blob)
-        audioEl.onended = () => { URL.revokeObjectURL(url); onEnd?.() }
-        audioEl.onerror = () => { URL.revokeObjectURL(url); onEnd?.() }
-        audioEl.src = url
-        audioEl.load()
-        await audioEl.play()
-        return
-      }
-
-      throw new Error('no audio path')
+      if (!res.ok) return
+      const blob = new Blob([await res.arrayBuffer()], { type: 'audio/mpeg' })
+      if (pendingAudioUrl.current) URL.revokeObjectURL(pendingAudioUrl.current)
+      pendingAudioUrl.current = URL.createObjectURL(blob)
+      setTtsReady(true)
     } catch {
-      // Final fallback: browser speech synthesis
-      window.speechSynthesis?.cancel()
-      const clean = stripMarkdown(text).replace(/\n+/g, ' ')
-      const utter = new SpeechSynthesisUtterance(clean)
-      utter.rate = 1.0
-      const voices = window.speechSynthesis?.getVoices() || []
-      const pick = voices.find(v => /serena|daniel|martha/i.test(v.name))
-        || voices.find(v => /samantha|karen|moira|nicky/i.test(v.name))
-        || voices.find(v => v.lang.startsWith('en') && v.localService)
-      if (pick) utter.voice = pick
-      utter.onend = () => onEnd?.()
-      utter.onerror = () => onEnd?.()
-      window.speechSynthesis?.speak(utter)
+      // TTS unavailable — Play button will fall back to browser speech synthesis
+      setTtsReady(true)
     }
+  }
+
+  // Called directly from a button tap (user gesture) — iOS allows play() here
+  function handlePlayAnswer() {
+    const audioEl = audioElRef.current
+    setPhase('speaking')
+
+    if (pendingAudioUrl.current && audioEl) {
+      // Audio was pre-loaded — play it synchronously in this gesture, no async needed
+      audioEl.onended = () => { setPhase('idle') }
+      audioEl.onerror = () => { setPhase('idle') }
+      audioEl.src = pendingAudioUrl.current
+      audioEl.load()
+      audioEl.play().catch(() => {
+        // Device blocked audio — fall back to browser TTS
+        speakFallback(pendingSpoken.current, () => setPhase('idle'))
+      })
+      pendingAudioUrl.current = null
+      setTtsReady(false)
+    } else {
+      // Pre-fetch didn't finish — use browser TTS (audio is unlocked by this gesture)
+      speakFallback(pendingSpoken.current, () => setPhase('idle'))
+    }
+  }
+
+  function speakFallback(text, onEnd) {
+    window.speechSynthesis?.cancel()
+    if (!text) { onEnd?.(); return }
+    const clean = stripMarkdown(text).replace(/\n+/g, ' ')
+    const utter = new SpeechSynthesisUtterance(clean)
+    utter.rate = 1.0
+    const voices = window.speechSynthesis?.getVoices() || []
+    const pick = voices.find(v => /serena|daniel|martha/i.test(v.name))
+      || voices.find(v => /samantha|karen|moira|nicky/i.test(v.name))
+      || voices.find(v => v.lang.startsWith('en') && v.localService)
+    if (pick) utter.voice = pick
+    utter.onend = () => onEnd?.()
+    utter.onerror = () => onEnd?.()
+    window.speechSynthesis?.speak(utter)
   }
 
   async function sendToAgent(spokenText, frameBase64) {
     setPhase('processing')
     setTranscript('')
+    setTtsReady(false)
+    if (pendingAudioUrl.current) { URL.revokeObjectURL(pendingAudioUrl.current); pendingAudioUrl.current = null }
 
     const userContent = []
     if (frameBase64) userContent.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frameBase64 } })
@@ -209,8 +191,11 @@ export default function CallMode({ onExit }) {
 
       const { display, spoken } = parseAgentResponse(rawText)
       setDisplayText(display)
-      setPhase('speaking')
-      speakText(spoken, () => setPhase('idle'))
+      pendingSpoken.current = spoken
+      setPhase('answered')
+
+      // Pre-fetch TTS audio in background — will be ready by the time user taps Play
+      prefetchTTS(spoken)
     } catch (err) {
       clearTimeout(timeout)
       setDisplayText(err.name === 'AbortError'
@@ -222,34 +207,10 @@ export default function CallMode({ onExit }) {
 
   function handlePressStart(e) {
     e.preventDefault()
-    if (pressingRef.current || phase === 'processing') return
+    if (pressingRef.current || phase === 'processing' || phase === 'speaking') return
 
-    // Create AudioContext lazily inside the gesture — iOS requires this for the
-    // context to start in 'running' state instead of 'suspended'.
-    if (!audioCtxRef.current) {
-      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)()
-    }
-    const ctx = audioCtxRef.current
-    ctx.resume().catch(() => {})
-    // Play a 1-sample silent buffer — canonical iOS AudioContext unlock
-    try {
-      const buf = ctx.createBuffer(1, 1, ctx.sampleRate)
-      const src = ctx.createBufferSource()
-      src.buffer = buf
-      src.connect(ctx.destination)
-      src.start(0)
-    } catch {}
-
-    // Also unlock the HTML5 audio element as a backup path
-    const audioEl = audioElRef.current
-    if (audioEl && silentUrlRef.current) {
-      audioEl.src = silentUrlRef.current
-      audioEl.load()
-      audioEl.play().catch(() => {})
-    }
-
-    // Stop any ongoing playback
-    ctxSourceRef.current?.stop()
+    // Cancel any ongoing audio
+    if (audioElRef.current) { audioElRef.current.pause(); audioElRef.current.src = '' }
     window.speechSynthesis?.cancel()
 
     pressingRef.current = true
@@ -271,9 +232,9 @@ export default function CallMode({ onExit }) {
         transcriptRef.current = t
         setTranscript(t)
       }
-      rec.onerror = () => { /* silently fall back to camera-only */ }
+      rec.onerror = () => {}
       rec.start()
-    } catch { /* silently ignore */ }
+    } catch {}
   }
 
   function handlePressEnd(e) {
@@ -291,17 +252,27 @@ export default function CallMode({ onExit }) {
     }, 200)
   }
 
-  const phaseConfig = {
-    idle:       { label: 'Hold to talk', color: '#0066CC' },
-    listening:  { label: 'Listening…',   color: '#ef4444' },
-    processing: { label: 'Thinking…',    color: '#64748b' },
-    speaking:   { label: 'Speaking…',    color: '#10b981' },
-  }
-  const { label, color } = phaseConfig[phase]
+  const isAnswered = phase === 'answered'
+  const pttDisabled = phase === 'processing' || phase === 'speaking'
+
+  const phaseLabel = {
+    idle:       'Hold to talk',
+    listening:  'Listening…',
+    processing: 'Thinking…',
+    answered:   'Hold to reply',
+    speaking:   'Speaking…',
+  }[phase]
+
+  const pttColor = {
+    idle:       '#0066CC',
+    listening:  '#ef4444',
+    processing: '#64748b',
+    answered:   '#0066CC',
+    speaking:   '#10b981',
+  }[phase]
 
   return (
     <div className="call-container">
-      {/* Rendered in DOM so iOS treats it as a first-class media element */}
       <audio ref={audioElRef} playsInline style={{ display: 'none' }} />
 
       {camError ? (
@@ -327,18 +298,34 @@ export default function CallMode({ onExit }) {
           <p className={`call-agent-text${phase === 'speaking' ? ' call-agent-text--speaking' : ''}`}>
             {displayText}
           </p>
+          {isAnswered && (
+            <button
+              className="play-answer-btn"
+              onClick={handlePlayAnswer}
+              disabled={!ttsReady}
+            >
+              {ttsReady ? (
+                <>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5v14l11-7z"/>
+                  </svg>
+                  Play answer
+                </>
+              ) : 'Loading audio…'}
+            </button>
+          )}
         </div>
 
         <div className="call-controls">
-          <p className="call-phase-label">{label}</p>
+          <p className="call-phase-label">{phaseLabel}</p>
           <button
             className="ptt-btn"
-            style={{ '--ptt-color': color }}
+            style={{ '--ptt-color': pttColor }}
             onMouseDown={handlePressStart}
             onMouseUp={handlePressEnd}
             onTouchStart={handlePressStart}
             onTouchEnd={handlePressEnd}
-            disabled={phase === 'processing'}
+            disabled={pttDisabled}
           >
             {phase === 'processing' ? (
               <span className="ptt-dots">

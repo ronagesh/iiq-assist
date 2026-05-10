@@ -137,6 +137,31 @@
   color: #7dd3fc;
 }
 
+.play-answer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255,255,255,0.15);
+  border: 1.5px solid rgba(255,255,255,0.35);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 999px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: background 0.15s;
+  align-self: flex-start;
+}
+.play-answer-btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.25);
+}
+.play-answer-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .call-controls {
   display: flex;
   flex-direction: column;
