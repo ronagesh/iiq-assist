@@ -6,13 +6,12 @@ function speak(text, onEnd) {
   if (!window.speechSynthesis) { onEnd?.(); return }
   window.speechSynthesis.cancel()
 
-  // Strip JSON artifacts and clean up for speech
   let clean = text
   try {
     const m = text.match(/\{[\s\S]*\}/)
     if (m) {
       const j = JSON.parse(m[0])
-      if (j.ticket) clean = `I've created a support ticket for you. ${j.summary} The priority is ${j.priority}. ${j.recommendedAction} Estimated resolution time: ${j.estimatedResolution}.`
+      if (j.ticket)   clean = `I've created a support ticket. ${j.summary} Priority is ${j.priority}. ${j.recommendedAction} ETA: ${j.estimatedResolution}.`
       else if (j.followUp) clean = j.question
     }
   } catch {}
@@ -23,17 +22,14 @@ function speak(text, onEnd) {
   utter.rate = 1.05
   utter.pitch = 1.0
 
-  const setVoice = () => {
+  const assignVoice = () => {
     const voices = window.speechSynthesis.getVoices()
-    const pick = voices.find(v =>
-      ['Samantha', 'Karen', 'Moira', 'Serena'].some(n => v.name.includes(n))
-    ) || voices.find(v => v.lang.startsWith('en') && v.localService)
+    const pick = voices.find(v => ['Samantha', 'Karen', 'Moira', 'Serena'].some(n => v.name.includes(n)))
+      || voices.find(v => v.lang.startsWith('en') && v.localService)
     if (pick) utter.voice = pick
   }
-
-  // Voices may not be loaded yet
-  if (window.speechSynthesis.getVoices().length) setVoice()
-  else window.speechSynthesis.onvoiceschanged = setVoice
+  if (window.speechSynthesis.getVoices().length) assignVoice()
+  else window.speechSynthesis.onvoiceschanged = assignVoice
 
   utter.onend = () => onEnd?.()
   utter.onerror = () => onEnd?.()
@@ -41,18 +37,20 @@ function speak(text, onEnd) {
 }
 
 export default function CallMode({ onExit }) {
-  const videoRef      = useRef(null)
-  const streamRef     = useRef(null)
+  const videoRef       = useRef(null)
+  const streamRef      = useRef(null)
   const recognitionRef = useRef(null)
-  const transcriptRef = useRef('')
-  const messagesRef   = useRef([])
+  const transcriptRef  = useRef('')
+  const frameRef       = useRef(null)      // captured on press
+  const pressingRef    = useRef(false)     // true while button held
+  const messagesRef    = useRef([])
 
-  const [phase, setPhase]         = useState('idle')   // idle | listening | processing | speaking
+  const [phase, setPhase]           = useState('idle')
   const [transcript, setTranscript] = useState('')
-  const [agentText, setAgentText] = useState("Hold the button and tell me what's going on — I can see what your camera sees.")
-  const [camError, setCamError]   = useState(null)
+  const [agentText, setAgentText]   = useState("Hold the button and tell me what's going on — I can see what your camera sees.")
+  const [camError, setCamError]     = useState(null)
+  const [hint, setHint]             = useState(null)
 
-  // Start camera on mount
   useEffect(() => {
     async function startCam() {
       try {
@@ -87,6 +85,7 @@ export default function CallMode({ onExit }) {
   async function sendToAgent(spokenText, frameBase64) {
     setPhase('processing')
     setTranscript('')
+    setHint(null)
 
     const userContent = []
     if (frameBase64) userContent.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frameBase64 } })
@@ -101,18 +100,17 @@ export default function CallMode({ onExit }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: newMessages }),
       })
-      if (!res.ok) throw new Error('API error')
+      if (!res.ok) throw new Error(`Server error ${res.status}`)
       const data = await res.json()
       const rawText = data.text || ''
       messagesRef.current = [...newMessages, { role: 'assistant', content: rawText }]
 
-      // Extract display text
       let displayText = rawText
       try {
         const m = rawText.match(/\{[\s\S]*\}/)
         if (m) {
           const j = JSON.parse(m[0])
-          if (j.ticket) displayText = `I'm creating a ticket for you. ${j.summary} Priority: ${j.priority}. ${j.recommendedAction}`
+          if (j.ticket)        displayText = `I'm creating a ticket. ${j.summary} Priority: ${j.priority}. ${j.recommendedAction}`
           else if (j.followUp) displayText = j.question
         }
       } catch {}
@@ -120,60 +118,80 @@ export default function CallMode({ onExit }) {
       setAgentText(displayText)
       setPhase('speaking')
       speak(rawText, () => setPhase('idle'))
-    } catch {
-      setAgentText("Sorry, I had trouble connecting. Please try again.")
+    } catch (err) {
+      setAgentText('Sorry, I had trouble connecting. Please try again.')
       setPhase('idle')
     }
   }
 
-  function startListening() {
-    if (phase !== 'idle') return
+  // ── Button press: capture frame + start speech recognition ────────────────
+  function handlePressStart(e) {
+    e.preventDefault()
+    if (pressingRef.current || phase === 'processing') return
+
+    pressingRef.current = true
     window.speechSynthesis?.cancel()
     transcriptRef.current = ''
+    frameRef.current = captureFrame()   // capture NOW while camera is steady
     setTranscript('')
+    setHint(null)
     setPhase('listening')
 
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) {
-      // No speech API — just capture frame with a default prompt
-      const frame = captureFrame()
-      sendToAgent('Please analyze what you see and diagnose the issue.', frame)
+      setHint('Voice not available — release to analyze the camera view.')
       return
     }
 
-    const rec = new SR()
-    recognitionRef.current = rec
-    rec.continuous = false
-    rec.interimResults = true
-    rec.lang = 'en-US'
+    try {
+      const rec = new SR()
+      recognitionRef.current = rec
+      rec.continuous = false
+      rec.interimResults = true
+      rec.lang = 'en-US'
 
-    rec.onresult = (e) => {
-      const t = Array.from(e.results).map(r => r[0].transcript).join('')
-      transcriptRef.current = t
-      setTranscript(t)
+      rec.onresult = (e) => {
+        const t = Array.from(e.results).map(r => r[0].transcript).join('')
+        transcriptRef.current = t
+        setTranscript(t)
+      }
+
+      // Don't reset phase on error — let handlePressEnd always fire the send
+      rec.onerror = (e) => {
+        if (e.error === 'not-allowed') setHint('Microphone blocked — release to analyze camera view only.')
+        else setHint('Voice unavailable — release to analyze camera view.')
+      }
+
+      rec.start()
+    } catch {
+      setHint('Voice unavailable — release to analyze camera view.')
     }
-    rec.onerror = () => setPhase('idle')
-    rec.start()
   }
 
-  function stopListening() {
-    if (phase !== 'listening') return
+  // ── Button release: always send regardless of whether voice worked ─────────
+  function handlePressEnd(e) {
+    e.preventDefault()
+    if (!pressingRef.current) return
+    pressingRef.current = false
+
     recognitionRef.current?.stop()
-    setTimeout(() => {
-      const spoken = transcriptRef.current || 'Please analyze what you see and diagnose the issue.'
-      const frame = captureFrame()
-      sendToAgent(spoken, frame)
-    }, 250)
-  }
+    recognitionRef.current = null
 
-  function handlePressStart(e) { e.preventDefault(); startListening() }
-  function handlePressEnd(e)   { e.preventDefault(); stopListening() }
+    // Small delay to collect final speech result
+    setTimeout(() => {
+      if (!pressingRef.current) {   // still released (not re-pressed)
+        const spoken = transcriptRef.current || 'Please analyze what you see and diagnose the issue.'
+        const frame  = frameRef.current || captureFrame()
+        sendToAgent(spoken, frame)
+      }
+    }, 200)
+  }
 
   const phaseConfig = {
-    idle:       { label: 'Hold to talk',  color: '#0066CC' },
-    listening:  { label: 'Listening…',    color: '#ef4444' },
-    processing: { label: 'Thinking…',     color: '#64748b' },
-    speaking:   { label: 'Speaking…',     color: '#10b981' },
+    idle:       { label: 'Hold to talk', color: '#0066CC' },
+    listening:  { label: 'Listening…',   color: '#ef4444' },
+    processing: { label: 'Thinking…',    color: '#64748b' },
+    speaking:   { label: 'Speaking…',    color: '#10b981' },
   }
   const { label, color } = phaseConfig[phase]
 
@@ -189,7 +207,6 @@ export default function CallMode({ onExit }) {
       )}
 
       <div className="call-overlay">
-        {/* Top bar */}
         <div className="call-top">
           <button className="call-exit-pill" onClick={onExit}>✕ Exit</button>
           <div className="call-agent-pill">
@@ -198,17 +215,14 @@ export default function CallMode({ onExit }) {
           </div>
         </div>
 
-        {/* Response area */}
         <div className="call-body">
-          {transcript && (
-            <p className="call-transcript">"{transcript}"</p>
-          )}
+          {transcript && <p className="call-transcript">"{transcript}"</p>}
+          {hint && <p className="call-hint">{hint}</p>}
           <p className={`call-agent-text${phase === 'speaking' ? ' call-agent-text--speaking' : ''}`}>
             {agentText}
           </p>
         </div>
 
-        {/* Push-to-talk */}
         <div className="call-controls">
           <p className="call-phase-label">{label}</p>
           <button
