@@ -2,9 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 
 const LOGO_URL = 'https://www.schooldataleadership.org/media/reviews/photos/original/5c/b8/87/incidentiq-34-1573848994.png'
 
-// 100ms of real silence at 8kHz — iOS requires a non-empty audio payload to unlock playback
-function makeSilentWavUrl() {
-  const sr = 8000, n = 800
+function makeSilentWavBlob() {
+  const sr = 8000, n = 800   // 100ms @ 8 kHz
   const buf = new ArrayBuffer(44 + n * 2)
   const v = new DataView(buf)
   const w = (s, o) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)))
@@ -14,7 +13,7 @@ function makeSilentWavUrl() {
   v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true)
   v.setUint16(32, 2, true); v.setUint16(34, 16, true)
   w('data', 36); v.setUint32(40, n * 2, true)
-  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))
+  return new Blob([buf], { type: 'audio/wav' })
 }
 
 function stripMarkdown(text) {
@@ -36,9 +35,7 @@ function parseAgentResponse(rawText) {
           spoken: rawText,
         }
       }
-      if (j.followUp) {
-        return { display: j.question, spoken: rawText }
-      }
+      if (j.followUp) return { display: j.question, spoken: rawText }
     }
   } catch {}
 
@@ -46,47 +43,12 @@ function parseAgentResponse(rawText) {
   const lines = clean.split('\n').filter(Boolean)
   const steps = lines.filter(l => /^\d+[\.)]\s/.test(l))
   const intro = lines.find(l => !/^\d+/.test(l.trim())) || ''
-  const stepCount = steps.length
 
   const display = intro
-    ? `${intro}${stepCount > 0 ? `\n\n${stepCount} steps — listen for instructions` : ''}`
+    ? `${intro}${steps.length > 0 ? `\n\n${steps.length} steps — listen for instructions` : ''}`
     : clean.slice(0, 140)
 
   return { display, spoken: rawText }
-}
-
-async function speakElevenLabs(text, audioEl, onEnd) {
-  try {
-    const res = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    })
-    if (!res.ok) throw new Error('TTS error')
-    const blob = new Blob([await res.arrayBuffer()], { type: 'audio/mpeg' })
-    const url = URL.createObjectURL(blob)
-
-    const cleanup = () => URL.revokeObjectURL(url)
-    audioEl.onended = () => { cleanup(); onEnd?.() }
-    audioEl.onerror = () => { cleanup(); onEnd?.() }
-    audioEl.src = url
-    audioEl.load()
-    await audioEl.play()
-  } catch {
-    // Fallback to browser TTS
-    window.speechSynthesis?.cancel()
-    const clean = stripMarkdown(text).replace(/\n+/g, ' ')
-    const utter = new SpeechSynthesisUtterance(clean)
-    utter.rate = 1.0
-    const voices = window.speechSynthesis?.getVoices() || []
-    const pick = voices.find(v => /daniel|serena|martha/i.test(v.name))
-      || voices.find(v => /samantha|karen|moira|nicky/i.test(v.name))
-      || voices.find(v => v.lang.startsWith('en') && v.localService)
-    if (pick) utter.voice = pick
-    utter.onend = () => onEnd?.()
-    utter.onerror = () => onEnd?.()
-    window.speechSynthesis?.speak(utter)
-  }
 }
 
 export default function CallMode({ onExit }) {
@@ -96,7 +58,9 @@ export default function CallMode({ onExit }) {
   const transcriptRef  = useRef('')
   const frameRef       = useRef(null)
   const pressingRef    = useRef(false)
-  const audioRef       = useRef(null)
+  const audioCtxRef    = useRef(null)   // created lazily in gesture
+  const ctxSourceRef   = useRef(null)
+  const audioElRef     = useRef(null)   // <audio> in JSX
   const silentUrlRef   = useRef(null)
   const messagesRef    = useRef([])
 
@@ -106,26 +70,41 @@ export default function CallMode({ onExit }) {
   const [camError, setCamError]       = useState(null)
 
   useEffect(() => {
-    silentUrlRef.current = makeSilentWavUrl()
+    silentUrlRef.current = URL.createObjectURL(makeSilentWavBlob())
 
-    async function startCam() {
+    async function init() {
+      // Request camera + mic together so the permission dialog fires here,
+      // not during the first PTT press. Mic permission also covers SR.
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        const s = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
-          audio: false,
+          audio: true,
         })
-        streamRef.current = stream
-        if (videoRef.current) videoRef.current.srcObject = stream
+        // We only needed the permission; stop the audio track immediately
+        s.getAudioTracks().forEach(t => t.stop())
+        streamRef.current = s
+        if (videoRef.current) videoRef.current.srcObject = s
       } catch {
-        setCamError('Camera access denied. Please allow camera access and try again.')
+        // Mic denied — fall back to video-only (SR will prompt separately, but camera works)
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+            audio: false,
+          })
+          streamRef.current = s
+          if (videoRef.current) videoRef.current.srcObject = s
+        } catch {
+          setCamError('Camera access denied. Please allow camera access and try again.')
+        }
       }
     }
-    startCam()
+    init()
 
     return () => {
       streamRef.current?.getTracks().forEach(t => t.stop())
       window.speechSynthesis?.cancel()
-      if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = '' }
+      ctxSourceRef.current?.stop()
+      audioCtxRef.current?.close()
       if (silentUrlRef.current) URL.revokeObjectURL(silentUrlRef.current)
       recognitionRef.current?.abort()
     }
@@ -141,10 +120,63 @@ export default function CallMode({ onExit }) {
     const canvas = document.createElement('canvas')
     canvas.width = w; canvas.height = h
     canvas.getContext('2d').drawImage(video, 0, 0, w, h)
+    try { return canvas.toDataURL('image/jpeg', 0.8).split(',')[1] } catch { return null }
+  }
+
+  async function speakText(text, onEnd) {
     try {
-      return canvas.toDataURL('image/jpeg', 0.8).split(',')[1]
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      if (!res.ok) throw new Error('TTS request failed')
+      const arrayBuffer = await res.arrayBuffer()
+
+      // Try AudioContext first (best quality, handles MP3 natively)
+      const ctx = audioCtxRef.current
+      if (ctx) {
+        await ctx.resume()
+        if (ctx.state === 'running') {
+          const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0))
+          const source = ctx.createBufferSource()
+          source.buffer = decoded
+          source.connect(ctx.destination)
+          source.onended = onEnd
+          ctxSourceRef.current = source
+          source.start(0)
+          return
+        }
+      }
+
+      // AudioContext suspended/unavailable — try HTML5 audio element
+      const audioEl = audioElRef.current
+      if (audioEl) {
+        const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' })
+        const url = URL.createObjectURL(blob)
+        audioEl.onended = () => { URL.revokeObjectURL(url); onEnd?.() }
+        audioEl.onerror = () => { URL.revokeObjectURL(url); onEnd?.() }
+        audioEl.src = url
+        audioEl.load()
+        await audioEl.play()
+        return
+      }
+
+      throw new Error('no audio path')
     } catch {
-      return null
+      // Final fallback: browser speech synthesis
+      window.speechSynthesis?.cancel()
+      const clean = stripMarkdown(text).replace(/\n+/g, ' ')
+      const utter = new SpeechSynthesisUtterance(clean)
+      utter.rate = 1.0
+      const voices = window.speechSynthesis?.getVoices() || []
+      const pick = voices.find(v => /serena|daniel|martha/i.test(v.name))
+        || voices.find(v => /samantha|karen|moira|nicky/i.test(v.name))
+        || voices.find(v => v.lang.startsWith('en') && v.localService)
+      if (pick) utter.voice = pick
+      utter.onend = () => onEnd?.()
+      utter.onerror = () => onEnd?.()
+      window.speechSynthesis?.speak(utter)
     }
   }
 
@@ -178,7 +210,7 @@ export default function CallMode({ onExit }) {
       const { display, spoken } = parseAgentResponse(rawText)
       setDisplayText(display)
       setPhase('speaking')
-      speakElevenLabs(spoken, audioRef.current, () => setPhase('idle'))
+      speakText(spoken, () => setPhase('idle'))
     } catch (err) {
       clearTimeout(timeout)
       setDisplayText(err.name === 'AbortError'
@@ -192,15 +224,32 @@ export default function CallMode({ onExit }) {
     e.preventDefault()
     if (pressingRef.current || phase === 'processing') return
 
-    // Unlock iOS audio with real silence — must happen synchronously in the gesture handler
-    const audio = audioRef.current
-    if (audio && silentUrlRef.current) {
-      audio.pause()
-      audio.src = silentUrlRef.current
-      audio.load()
-      audio.play().catch(() => {})
+    // Create AudioContext lazily inside the gesture — iOS requires this for the
+    // context to start in 'running' state instead of 'suspended'.
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)()
+    }
+    const ctx = audioCtxRef.current
+    ctx.resume().catch(() => {})
+    // Play a 1-sample silent buffer — canonical iOS AudioContext unlock
+    try {
+      const buf = ctx.createBuffer(1, 1, ctx.sampleRate)
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      src.connect(ctx.destination)
+      src.start(0)
+    } catch {}
+
+    // Also unlock the HTML5 audio element as a backup path
+    const audioEl = audioElRef.current
+    if (audioEl && silentUrlRef.current) {
+      audioEl.src = silentUrlRef.current
+      audioEl.load()
+      audioEl.play().catch(() => {})
     }
 
+    // Stop any ongoing playback
+    ctxSourceRef.current?.stop()
     window.speechSynthesis?.cancel()
 
     pressingRef.current = true
@@ -211,15 +260,14 @@ export default function CallMode({ onExit }) {
 
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) return
-
     try {
       const rec = new SR()
       recognitionRef.current = rec
       rec.continuous = false
       rec.interimResults = true
       rec.lang = 'en-US'
-      rec.onresult = (e) => {
-        const t = Array.from(e.results).map(r => r[0].transcript).join('')
+      rec.onresult = (ev) => {
+        const t = Array.from(ev.results).map(r => r[0].transcript).join('')
         transcriptRef.current = t
         setTranscript(t)
       }
@@ -232,10 +280,8 @@ export default function CallMode({ onExit }) {
     e.preventDefault()
     if (!pressingRef.current) return
     pressingRef.current = false
-
     recognitionRef.current?.stop()
     recognitionRef.current = null
-
     setTimeout(() => {
       if (!pressingRef.current) {
         const spoken = transcriptRef.current || 'Please analyze what you see and diagnose the issue.'
@@ -255,8 +301,8 @@ export default function CallMode({ onExit }) {
 
   return (
     <div className="call-container">
-      {/* Hidden audio element — rendered in DOM so iOS treats it as a media element */}
-      <audio ref={audioRef} playsInline style={{ display: 'none' }} />
+      {/* Rendered in DOM so iOS treats it as a first-class media element */}
+      <audio ref={audioElRef} playsInline style={{ display: 'none' }} />
 
       {camError ? (
         <div className="call-cam-error">
