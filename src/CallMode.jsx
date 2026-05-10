@@ -64,11 +64,12 @@ export default function CallMode({ onExit }) {
   const transcriptRef  = useRef('')
   const frameRef       = useRef(null)
   const pressingRef    = useRef(false)
-  const audioElRef     = useRef(null)
+  const audioElRef      = useRef(null)
   const pendingAudioUrl = useRef(null)
-  const segmentsRef    = useRef([])
-  const segIdxRef      = useRef(0)
-  const messagesRef    = useRef([])
+  const segmentsRef     = useRef([])
+  const segIdxRef       = useRef(0)
+  const messagesRef     = useRef([])
+  const playTappedRef   = useRef(false)   // guard: ignore PTT for 600ms after Play tap
 
   const [phase, setPhase]         = useState('idle')
   const [transcript, setTranscript] = useState('')
@@ -194,7 +195,10 @@ export default function CallMode({ onExit }) {
   }
 
   // Called from Play button — direct user gesture, iOS allows audio.play() here
-  function handlePlayStep() {
+  function handlePlayStep(e) {
+    e.stopPropagation()
+    playTappedRef.current = true
+    setTimeout(() => { playTappedRef.current = false }, 600)
     const idx = segIdxRef.current
     const segs = segmentsRef.current
     const seg = segs[idx]
@@ -282,6 +286,7 @@ export default function CallMode({ onExit }) {
   function handlePressStart(e) {
     e.preventDefault()
     if (pressingRef.current || phase === 'processing' || phase === 'speaking') return
+    if (playTappedRef.current) return   // ignore ghost PTT touch right after Play tap
 
     if (audioElRef.current) { audioElRef.current.pause(); audioElRef.current.src = '' }
     window.speechSynthesis?.cancel()
@@ -396,6 +401,8 @@ export default function CallMode({ onExit }) {
               <button
                 className="play-answer-btn"
                 onClick={handlePlayStep}
+                onTouchStart={e => e.stopPropagation()}
+                onTouchEnd={e => e.stopPropagation()}
                 disabled={!ttsReady}
               >
                 {getPlayLabel()}
