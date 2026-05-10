@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 
 const LOGO_URL = 'https://www.schooldataleadership.org/media/reviews/photos/original/5c/b8/87/incidentiq-34-1573848994.png'
+const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA='
 
 function stripMarkdown(text) {
   return text
@@ -10,7 +11,6 @@ function stripMarkdown(text) {
     .trim()
 }
 
-// Returns { display, spoken } — display is short and clean, spoken is for TTS
 function parseAgentResponse(rawText) {
   try {
     const m = rawText.match(/\{[\s\S]*\}/)
@@ -18,7 +18,7 @@ function parseAgentResponse(rawText) {
       const j = JSON.parse(m[0])
       if (j.ticket) {
         return {
-          display: `🎫 Ticket created · ${j.priority.toUpperCase()} priority\n${j.summary}`,
+          display: `Ticket created · ${j.priority.toUpperCase()} priority\n${j.summary}`,
           spoken: rawText,
         }
       }
@@ -28,7 +28,6 @@ function parseAgentResponse(rawText) {
     }
   } catch {}
 
-  // Plain text resolution — show intro sentence + step count
   const clean = stripMarkdown(rawText)
   const lines = clean.split('\n').filter(Boolean)
   const steps = lines.filter(l => /^\d+[\.)]\s/.test(l) || l.match(/^\d+\s/))
@@ -42,19 +41,7 @@ function parseAgentResponse(rawText) {
   return { display, spoken: rawText }
 }
 
-// Play audio through an already-unlocked AudioContext so iOS doesn't block it
-async function playViaAudioContext(arrayBuffer, audioCtx, sourceRef, onEnd) {
-  await audioCtx.resume()
-  const decoded = await audioCtx.decodeAudioData(arrayBuffer)
-  const source = audioCtx.createBufferSource()
-  source.buffer = decoded
-  source.connect(audioCtx.destination)
-  source.onended = () => onEnd?.()
-  sourceRef.current = source
-  source.start(0)
-}
-
-async function speakElevenLabs(text, audioCtxRef, sourceRef, onEnd) {
+async function speakElevenLabs(text, audioEl, onEnd) {
   try {
     const res = await fetch('/api/tts', {
       method: 'POST',
@@ -62,18 +49,29 @@ async function speakElevenLabs(text, audioCtxRef, sourceRef, onEnd) {
       body: JSON.stringify({ text }),
     })
     if (!res.ok) throw new Error('TTS error')
-    const arrayBuffer = await res.arrayBuffer()
-    await playViaAudioContext(arrayBuffer, audioCtxRef.current, sourceRef, onEnd)
+    const blob = new Blob([await res.arrayBuffer()], { type: 'audio/mpeg' })
+    const url = URL.createObjectURL(blob)
+
+    audioEl.onended = () => {
+      URL.revokeObjectURL(url)
+      onEnd?.()
+    }
+    audioEl.onerror = () => {
+      URL.revokeObjectURL(url)
+      onEnd?.()
+    }
+    audioEl.src = url
+    await audioEl.play()
   } catch {
     // Fallback to browser TTS
     const clean = stripMarkdown(text).replace(/\n+/g, ' ')
     const utter = new SpeechSynthesisUtterance(clean)
     utter.rate = 1.05
     const voices = window.speechSynthesis?.getVoices() || []
-    const pick = voices.find(v => ['Samantha','Karen','Moira'].some(n => v.name.includes(n)))
+    const pick = voices.find(v => ['Samantha', 'Karen', 'Moira'].some(n => v.name.includes(n)))
       || voices.find(v => v.lang.startsWith('en') && v.localService)
     if (pick) utter.voice = pick
-    utter.onend  = () => onEnd?.()
+    utter.onend = () => onEnd?.()
     utter.onerror = () => onEnd?.()
     window.speechSynthesis?.speak(utter)
   }
@@ -86,17 +84,19 @@ export default function CallMode({ onExit }) {
   const transcriptRef  = useRef('')
   const frameRef       = useRef(null)
   const pressingRef    = useRef(false)
-  const audioCtxRef    = useRef(null)   // unlocked on first press
-  const sourceRef      = useRef(null)   // current AudioBufferSourceNode
+  const audioRef       = useRef(null)
   const messagesRef    = useRef([])
 
-  const [phase, setPhase]           = useState('idle')
-  const [transcript, setTranscript] = useState('')
+  const [phase, setPhase]             = useState('idle')
+  const [transcript, setTranscript]   = useState('')
   const [displayText, setDisplayText] = useState("Hold the button and tell me what's going on — I can see what your camera sees.")
-  const [camError, setCamError]     = useState(null)
-  const [hint, setHint]             = useState(null)
+  const [camError, setCamError]       = useState(null)
 
   useEffect(() => {
+    // Pre-create Audio element so iOS has a reference to unlock
+    audioRef.current = new Audio()
+    audioRef.current.preload = 'none'
+
     async function startCam() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -110,11 +110,14 @@ export default function CallMode({ onExit }) {
       }
     }
     startCam()
+
     return () => {
       streamRef.current?.getTracks().forEach(t => t.stop())
       window.speechSynthesis?.cancel()
-      sourceRef.current?.stop()
-      audioCtxRef.current?.close()
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current.src = ''
+      }
       recognitionRef.current?.abort()
     }
   }, [])
@@ -132,7 +135,6 @@ export default function CallMode({ onExit }) {
   async function sendToAgent(spokenText, frameBase64) {
     setPhase('processing')
     setTranscript('')
-    setHint(null)
 
     const userContent = []
     if (frameBase64) userContent.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frameBase64 } })
@@ -155,8 +157,8 @@ export default function CallMode({ onExit }) {
       const { display, spoken } = parseAgentResponse(rawText)
       setDisplayText(display)
       setPhase('speaking')
-      speakElevenLabs(spoken, audioCtxRef, sourceRef, () => setPhase('idle'))
-    } catch (err) {
+      speakElevenLabs(spoken, audioRef.current, () => setPhase('idle'))
+    } catch {
       setDisplayText('Sorry, I had trouble connecting. Please try again.')
       setPhase('idle')
     }
@@ -166,28 +168,24 @@ export default function CallMode({ onExit }) {
     e.preventDefault()
     if (pressingRef.current || phase === 'processing') return
 
-    // Unlock / create AudioContext on the user gesture so iOS allows playback later
-    if (!audioCtxRef.current) {
-      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)()
+    // Unlock iOS audio on user gesture by playing a silent clip
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.src = SILENT_WAV
+      audioRef.current.play().catch(() => {})
     }
-    audioCtxRef.current.resume()
 
     // Stop any ongoing speech
-    sourceRef.current?.stop()
     window.speechSynthesis?.cancel()
 
     pressingRef.current = true
     transcriptRef.current = ''
     frameRef.current = captureFrame()
     setTranscript('')
-    setHint(null)
     setPhase('listening')
 
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) {
-      setHint('Voice unavailable — release to analyze the camera view.')
-      return
-    }
+    if (!SR) return
 
     try {
       const rec = new SR()
@@ -200,14 +198,9 @@ export default function CallMode({ onExit }) {
         transcriptRef.current = t
         setTranscript(t)
       }
-      rec.onerror = (e) => {
-        if (e.error === 'not-allowed') setHint('Mic blocked — release to analyze camera view only.')
-        else setHint('Voice unavailable — release to analyze camera view.')
-      }
+      rec.onerror = () => { /* silently fall back to camera-only */ }
       rec.start()
-    } catch {
-      setHint('Voice unavailable — release to analyze camera view.')
-    }
+    } catch { /* silently ignore */ }
   }
 
   function handlePressEnd(e) {
@@ -257,7 +250,6 @@ export default function CallMode({ onExit }) {
 
         <div className="call-body">
           {transcript && <p className="call-transcript">"{transcript}"</p>}
-          {hint && <p className="call-hint">{hint}</p>}
           <p className={`call-agent-text${phase === 'speaking' ? ' call-agent-text--speaking' : ''}`}>
             {displayText}
           </p>
