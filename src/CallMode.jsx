@@ -74,6 +74,7 @@ export default function CallMode({ onExit }) {
   const [phase, setPhase]         = useState('idle')
   const [transcript, setTranscript] = useState('')
   const [ttsReady, setTtsReady]   = useState(false)
+  const [audioFetching, setAudioFetching] = useState(false)
   // { idx, total, type, stepNum } — drives position indicator, no text shown
   const [segPos, setSegPos]       = useState(null)
   const [camError, setCamError]   = useState(null)
@@ -151,6 +152,7 @@ export default function CallMode({ onExit }) {
   }
 
   async function prefetchTTS(text) {
+    setAudioFetching(true)
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 8000)
     try {
@@ -173,6 +175,8 @@ export default function CallMode({ onExit }) {
       clearTimeout(timeout)
       console.warn('prefetchTTS failed:', e.message)
       // pendingAudioUrl stays null — handlePlayStep falls back to browser TTS
+    } finally {
+      setAudioFetching(false)
     }
   }
 
@@ -341,7 +345,7 @@ export default function CallMode({ onExit }) {
   }
 
   function getPlayLabel() {
-    if (!ttsReady) return 'Loading…'
+    if (!ttsReady || audioFetching) return 'Loading…'
     if (!segPos) return '▶  Play'
     const { type, stepNum } = segPos
     if (type === 'intro') return '▶  Play overview'
@@ -403,7 +407,7 @@ export default function CallMode({ onExit }) {
                 onClick={handlePlayStep}
                 onTouchStart={e => e.stopPropagation()}
                 onTouchEnd={e => e.stopPropagation()}
-                disabled={!ttsReady}
+                disabled={!ttsReady || audioFetching}
               >
                 {getPlayLabel()}
               </button>
