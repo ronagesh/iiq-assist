@@ -110,13 +110,14 @@ export default function CallMode({ onExit }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),
       })
-      if (!res.ok) return
+      if (!res.ok) throw new Error('TTS failed')
       const blob = new Blob([await res.arrayBuffer()], { type: 'audio/mpeg' })
       if (pendingAudioUrl.current) URL.revokeObjectURL(pendingAudioUrl.current)
       pendingAudioUrl.current = URL.createObjectURL(blob)
-      setTtsReady(true)
     } catch {
-      // TTS unavailable — Play button will fall back to browser speech synthesis
+      // ElevenLabs unavailable — Play button will fall back to browser speech synthesis
+    } finally {
+      // Always enable the button regardless of success or failure
       setTtsReady(true)
     }
   }
