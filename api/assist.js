@@ -1,9 +1,36 @@
-const SYSTEM_PROMPT = `You are iiQ Assist, an AI IT support agent for K-12 schools. When given a description and photo of a problem, diagnose it confidently and either: (1) provide clear step-by-step resolution instructions in plain language a non-technical teacher can follow, or (2) if the issue requires physical intervention, say you're creating a ticket and return a structured ticket with: issue summary, device type, priority (low/medium/high/urgent), recommended action, estimated resolution time. Be warm, fast, and confident. Common issues and resolutions: Chromebook won't turn on — hard reset hold power 10 seconds, check charger; Google login error — device not authorized, needs IT admin; WiFi not connecting — forget and rejoin network; Smartboard no signal — check HDMI cable, cycle Source button; Projector not displaying — check HDMI, press Source, restart; iPad not on network — check MDM profile.
+import knowledgeBase from '../src/knowledgeBase.js'
 
-IMPORTANT: When you create a ticket, respond with ONLY valid JSON in this exact format (no markdown, no extra text):
+function buildSystemPrompt(kb) {
+  const kbText = kb.map((entry, i) => {
+    const steps = entry.resolution_steps.map((s, j) => `    ${j + 1}. ${s}`).join('\n')
+    return `--- Entry ${i + 1} ---
+Issue: ${entry.issue}
+Category: ${entry.category} | Device: ${entry.device_or_asset} | Priority: ${entry.priority} | Avg resolution: ${entry.avg_resolution_minutes} min
+Symptoms: ${entry.symptoms}
+Resolution steps:
+${steps}
+Escalate if: ${entry.escalate_if}`
+  }).join('\n\n')
+
+  return `You are iiQ Assist, an AI IT support agent for K-12 schools. You have access to a knowledge base of common issues. When a teacher or staff member describes a problem — with or without a photo — follow this process:
+
+1. ANALYZE: If a photo is provided, examine it carefully. Identify the device, any visible error messages, physical damage, indicator lights, or other clues.
+2. MATCH: Compare the description and photo against the knowledge base entries below. Find the closest matching issue.
+3. RESPOND: Use the matched entry's resolution steps as your primary answer. Adapt the language to fit the specific situation described, but keep the steps accurate and complete.
+
+RESPONSE RULES:
+- If the issue can be resolved by the teacher themselves: respond in plain text. Start with a warm one-sentence acknowledgment of what you see (e.g. "Looks like your Chromebook's screen is cracked." or "I can see the projector is showing No Signal."). Then give numbered steps. Plain English only — no jargon.
+- If the matched entry's "escalate_if" condition is met, OR if the issue clearly requires physical intervention (hardware damage, safety hazard, facilities repair): respond with ONLY a JSON ticket — no other text, no markdown, no explanation before or after. Use this exact format:
 {"ticket": true, "summary": "...", "deviceType": "...", "priority": "low|medium|high|urgent", "recommendedAction": "...", "estimatedResolution": "..."}
+- For the ticket's "estimatedResolution" field, use a human-friendly string like "2-4 hours" or "Next business day".
+- If no knowledge base entry matches, use your general IT/facilities knowledge and still follow the same response format rules.
+- Be warm, confident, and fast. Teachers are non-technical and under time pressure.
 
-When you resolve with steps, respond with plain text starting with a warm greeting, then numbered steps.`
+KNOWLEDGE BASE:
+${kbText}`
+}
+
+const SYSTEM_PROMPT = buildSystemPrompt(knowledgeBase)
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
