@@ -1,5 +1,210 @@
 /* iiQ Assist – mobile-first UI */
 
+/* ── Call Mode ───────────────────────────── */
+.call-container {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 50;
+}
+
+.call-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.call-cam-error {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  color: #fff;
+  padding: 32px;
+  text-align: center;
+  font-size: 16px;
+}
+
+.call-exit-btn-standalone {
+  background: rgba(255,255,255,0.2);
+  border: 1.5px solid rgba(255,255,255,0.4);
+  color: #fff;
+  font-size: 15px;
+  font-family: inherit;
+  font-weight: 600;
+  padding: 10px 24px;
+  border-radius: 20px;
+  cursor: pointer;
+}
+
+.call-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: linear-gradient(
+    to bottom,
+    rgba(0,0,0,0.55) 0%,
+    transparent 28%,
+    transparent 52%,
+    rgba(0,0,0,0.75) 100%
+  );
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.call-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px;
+  padding-top: calc(20px + env(safe-area-inset-top));
+}
+
+.call-exit-pill {
+  background: rgba(0,0,0,0.35);
+  border: 1.5px solid rgba(255,255,255,0.3);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 7px 14px;
+  border-radius: 20px;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.call-agent-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(0,0,0,0.35);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1.5px solid rgba(255,255,255,0.2);
+  border-radius: 20px;
+  padding: 5px 12px 5px 5px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.call-agent-logo {
+  height: 22px;
+  width: auto;
+  border-radius: 6px;
+  background: #fff;
+  padding: 2px 4px;
+  object-fit: contain;
+}
+
+.call-body {
+  padding: 0 22px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.call-transcript {
+  color: rgba(255,255,255,0.6);
+  font-size: 14px;
+  font-style: italic;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.call-agent-text {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.55;
+  margin: 0;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.6);
+}
+
+.call-agent-text--speaking {
+  color: #7dd3fc;
+}
+
+.call-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 44px;
+}
+
+.call-phase-label {
+  color: rgba(255,255,255,0.75);
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+  letter-spacing: 0.2px;
+}
+
+.ptt-btn {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.35);
+  background: var(--ptt-color, #0066CC);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.4);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ptt-btn:active,
+.ptt-btn[style*="#ef4444"] {
+  transform: scale(1.08);
+}
+
+.ptt-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ptt-btn[style*="#ef4444"] {
+  animation: ptt-pulse 1s infinite;
+}
+
+.ptt-btn[style*="#10b981"] {
+  animation: ptt-pulse 1.5s infinite;
+}
+
+@keyframes ptt-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(255,255,255,0.35); }
+  70%  { box-shadow: 0 0 0 18px rgba(255,255,255,0); }
+  100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+}
+
+.ptt-dots {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.ptt-dots .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+  animation: bounce 1.2s infinite;
+}
+
+.ptt-dots .dot:nth-child(2) { animation-delay: 0.2s; }
+.ptt-dots .dot:nth-child(3) { animation-delay: 0.4s; }
+
 .app-container {
   display: flex;
   flex-direction: column;
@@ -88,6 +293,45 @@
   font-size: 16px;
   color: #64748b;
   margin: 0;
+}
+
+/* ── AI Call button ──────────────────────── */
+.ai-call-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  background: #0066CC;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  font-family: inherit;
+  border: none;
+  border-radius: 16px;
+  padding: 16px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  box-shadow: 0 4px 16px rgba(0, 102, 204, 0.35);
+}
+
+.ai-call-btn:hover  { background: #0052a3; }
+.ai-call-btn:active { transform: scale(0.98); }
+
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.or-divider::before,
+.or-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e2e8f0;
 }
 
 /* ── Input form ──────────────────────────── */

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import './App.css'
+import CallMode from './CallMode.jsx'
 
 const LOGO_URL = 'https://www.schooldataleadership.org/media/reviews/photos/original/5c/b8/87/incidentiq-34-1573848994.png'
 
@@ -287,10 +288,14 @@ export default function App() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  const [callMode, setCallMode] = useState(false)
+
   const isChat = phase === 'chat' || phase === 'done'
   const showReplyBar = isChat && !loading
   const lastAssistant = [...thread].reverse().find(m => m.role === 'assistant')
   const replyPlaceholder = lastAssistant?.type === 'followUp' ? 'Type your reply…' : 'Ask a follow-up…'
+
+  if (callMode) return <CallMode onExit={() => setCallMode(false)} />
 
   return (
     <div className="app-container">
@@ -312,6 +317,16 @@ export default function App() {
               <h1 className="hero-title">Hi, I'm your AI IT support agent.</h1>
               <p className="hero-subtitle">What's the issue today?</p>
             </div>
+
+            <button className="ai-call-btn" onClick={() => setCallMode(true)}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2H3v2a9 9 0 0 0 8 8.94V22H8v2h8v-2h-3v-1.06A9 9 0 0 0 21 12v-2h-2z"/>
+              </svg>
+              Start AI Call
+            </button>
+
+            <div className="or-divider"><span>or describe it in text</span></div>
 
             <form className="input-form" onSubmit={handleInitialSubmit}>
               <div className="input-card">
