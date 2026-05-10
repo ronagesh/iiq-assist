@@ -52,7 +52,9 @@ export default async function handler(req, res) {
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}))
-      return res.status(response.status).json({ error: err.detail?.message || 'ElevenLabs error' })
+      const detail = err.detail?.message || JSON.stringify(err.detail) || JSON.stringify(err) || 'ElevenLabs error'
+      console.error(`ElevenLabs ${response.status}:`, detail)
+      return res.status(response.status).json({ error: detail })
     }
 
     const audio = await response.arrayBuffer()

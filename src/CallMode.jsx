@@ -10,31 +10,51 @@ function stripMarkdown(text) {
     .trim()
 }
 
-function parseAgentResponse(rawText) {
+// Parse response into an array of speakable segments
+function parseToSegments(rawText) {
   try {
     const m = rawText.match(/\{[\s\S]*\}/)
     if (m) {
       const j = JSON.parse(m[0])
       if (j.ticket) {
-        return {
-          display: `Ticket created · ${j.priority.toUpperCase()} priority\n${j.summary}`,
-          spoken: rawText,
-        }
+        return [{ type: 'single', ttsText: `I've created a support ticket. ${j.summary}. Priority: ${j.priority}. ${j.recommendedAction}. Estimated resolution: ${j.estimatedResolution}.` }]
       }
-      if (j.followUp) return { display: j.question, spoken: rawText }
+      if (j.followUp) return [{ type: 'single', ttsText: j.question }]
     }
   } catch {}
 
-  const clean = stripMarkdown(rawText)
-  const lines = clean.split('\n').filter(Boolean)
-  const steps = lines.filter(l => /^\d+[\.)]\s/.test(l))
-  const intro = lines.find(l => !/^\d+/.test(l.trim())) || ''
+  const clean = rawText
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/`(.*?)`/g, '$1')
+    .trim()
 
-  const display = intro
-    ? `${intro}${steps.length > 0 ? `\n\n${steps.length} steps — listen for instructions` : ''}`
-    : clean.slice(0, 140)
+  const lines = clean.split('\n').filter(l => l.trim())
+  const segments = []
+  let introLines = []
+  let inSteps = false
+  let stepNum = 0
 
-  return { display, spoken: rawText }
+  for (const line of lines) {
+    const m = line.match(/^\d+[.)]\s+(.+)/)
+    if (m) {
+      if (!inSteps && introLines.length > 0) {
+        segments.push({ type: 'intro', ttsText: introLines.join(' ') })
+        introLines = []
+      }
+      inSteps = true
+      stepNum++
+      segments.push({ type: 'step', stepNum, ttsText: m[1].trim() })
+    } else if (!inSteps) {
+      introLines.push(line.trim())
+    }
+  }
+
+  if (introLines.length > 0 && !inSteps) {
+    segments.push({ type: 'single', ttsText: introLines.join(' ') })
+  }
+
+  return segments.length > 0 ? segments : [{ type: 'single', ttsText: clean.slice(0, 500) }]
 }
 
 export default function CallMode({ onExit }) {
@@ -45,15 +65,17 @@ export default function CallMode({ onExit }) {
   const frameRef       = useRef(null)
   const pressingRef    = useRef(false)
   const audioElRef     = useRef(null)
-  const pendingAudioUrl = useRef(null)   // pre-fetched blob URL, ready to play on tap
-  const pendingSpoken   = useRef(null)   // text for fallback TTS
+  const pendingAudioUrl = useRef(null)
+  const segmentsRef    = useRef([])
+  const segIdxRef      = useRef(0)
   const messagesRef    = useRef([])
 
-  const [phase, setPhase]             = useState('idle')
-  const [transcript, setTranscript]   = useState('')
-  const [displayText, setDisplayText] = useState("Hold the button and tell me what's going on — I can see what your camera sees.")
-  const [ttsReady, setTtsReady]       = useState(false)
-  const [camError, setCamError]       = useState(null)
+  const [phase, setPhase]         = useState('idle')
+  const [transcript, setTranscript] = useState('')
+  const [ttsReady, setTtsReady]   = useState(false)
+  // { idx, total, type, stepNum } — drives position indicator, no text shown
+  const [segPos, setSegPos]       = useState(null)
+  const [camError, setCamError]   = useState(null)
 
   useEffect(() => {
     async function init() {
@@ -102,47 +124,16 @@ export default function CallMode({ onExit }) {
     try { return canvas.toDataURL('image/jpeg', 0.8).split(',')[1] } catch { return null }
   }
 
-  // Pre-fetch TTS in the background so audio is ready when user taps Play
-  async function prefetchTTS(text) {
-    try {
-      const res = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      })
-      if (!res.ok) throw new Error('TTS failed')
-      const blob = new Blob([await res.arrayBuffer()], { type: 'audio/mpeg' })
-      if (pendingAudioUrl.current) URL.revokeObjectURL(pendingAudioUrl.current)
-      pendingAudioUrl.current = URL.createObjectURL(blob)
-    } catch {
-      // ElevenLabs unavailable — Play button will fall back to browser speech synthesis
-    } finally {
-      // Always enable the button regardless of success or failure
-      setTtsReady(true)
-    }
-  }
-
-  // Called directly from a button tap (user gesture) — iOS allows play() here
-  function handlePlayAnswer() {
-    const audioEl = audioElRef.current
-    setPhase('speaking')
-
-    if (pendingAudioUrl.current && audioEl) {
-      // Audio was pre-loaded — play it synchronously in this gesture, no async needed
-      audioEl.onended = () => { setPhase('idle') }
-      audioEl.onerror = () => { setPhase('idle') }
-      audioEl.src = pendingAudioUrl.current
-      audioEl.load()
-      audioEl.play().catch(() => {
-        // Device blocked audio — fall back to browser TTS
-        speakFallback(pendingSpoken.current, () => setPhase('idle'))
-      })
-      pendingAudioUrl.current = null
-      setTtsReady(false)
-    } else {
-      // Pre-fetch didn't finish — use browser TTS (audio is unlocked by this gesture)
-      speakFallback(pendingSpoken.current, () => setPhase('idle'))
-    }
+  function pickVoice() {
+    const voices = window.speechSynthesis?.getVoices() || []
+    // Prefer British female, then other female, then any British, then any English
+    // Explicitly avoid 'Daniel' (male) by not including it in the priority list
+    return voices.find(v => /serena|martha/i.test(v.name))
+      || voices.find(v => /samantha|moira|nicky|karen/i.test(v.name))
+      || voices.find(v => v.lang === 'en-GB' && v.localService && !/daniel|oliver|arthur/i.test(v.name))
+      || voices.find(v => v.lang.startsWith('en') && v.localService && v.name.toLowerCase().includes('fem'))
+      || voices.find(v => v.lang === 'en-US' && v.localService)
+      || null
   }
 
   function speakFallback(text, onEnd) {
@@ -151,19 +142,92 @@ export default function CallMode({ onExit }) {
     const clean = stripMarkdown(text).replace(/\n+/g, ' ')
     const utter = new SpeechSynthesisUtterance(clean)
     utter.rate = 1.0
-    const voices = window.speechSynthesis?.getVoices() || []
-    const pick = voices.find(v => /serena|daniel|martha/i.test(v.name))
-      || voices.find(v => /samantha|karen|moira|nicky/i.test(v.name))
-      || voices.find(v => v.lang.startsWith('en') && v.localService)
-    if (pick) utter.voice = pick
+    const voice = pickVoice()
+    if (voice) utter.voice = voice
     utter.onend = () => onEnd?.()
     utter.onerror = () => onEnd?.()
     window.speechSynthesis?.speak(utter)
   }
 
+  async function prefetchTTS(text) {
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        console.warn('TTS error:', res.status, err.error)
+        throw new Error(err.error || 'TTS failed')
+      }
+      const blob = new Blob([await res.arrayBuffer()], { type: 'audio/mpeg' })
+      if (pendingAudioUrl.current) URL.revokeObjectURL(pendingAudioUrl.current)
+      pendingAudioUrl.current = URL.createObjectURL(blob)
+    } catch (e) {
+      console.warn('prefetchTTS failed, will use browser TTS:', e.message)
+      // Will fall back to browser TTS on play
+    } finally {
+      setTtsReady(true)
+    }
+  }
+
+  // Advance to segment at idx, or return to idle if past the end
+  function advanceToSegment(idx) {
+    const segs = segmentsRef.current
+    if (idx >= segs.length) {
+      segIdxRef.current = 0
+      segmentsRef.current = []
+      setSegPos(null)
+      setPhase('idle')
+      return
+    }
+    segIdxRef.current = idx
+    const seg = segs[idx]
+    const stepCount = segs.filter(s => s.type === 'step').length
+    setSegPos({ idx, total: segs.length, type: seg.type, stepNum: seg.stepNum, stepCount })
+    // If pre-fetch already completed while playing the previous segment, ttsReady should be true
+    setTtsReady(pendingAudioUrl.current !== null)
+    setPhase('ready')
+  }
+
+  // Called from Play button — direct user gesture, iOS allows audio.play() here
+  function handlePlayStep() {
+    const idx = segIdxRef.current
+    const segs = segmentsRef.current
+    const seg = segs[idx]
+    if (!seg) return
+
+    setPhase('speaking')
+
+    // Pre-fetch next segment immediately so it's ready when this one ends
+    const nextIdx = idx + 1
+    if (nextIdx < segs.length) {
+      setTtsReady(false)
+      prefetchTTS(segs[nextIdx].ttsText)
+    }
+
+    const blobUrl = pendingAudioUrl.current
+    pendingAudioUrl.current = null
+
+    function onDone() { advanceToSegment(nextIdx) }
+
+    const audioEl = audioElRef.current
+    if (blobUrl && audioEl) {
+      audioEl.onended = () => { URL.revokeObjectURL(blobUrl); onDone() }
+      audioEl.onerror = () => { URL.revokeObjectURL(blobUrl); onDone() }
+      audioEl.src = blobUrl
+      audioEl.load()
+      audioEl.play().catch(() => speakFallback(seg.ttsText, onDone))
+    } else {
+      speakFallback(seg.ttsText, onDone)
+    }
+  }
+
   async function sendToAgent(spokenText, frameBase64) {
     setPhase('processing')
     setTranscript('')
+    setSegPos(null)
     setTtsReady(false)
     if (pendingAudioUrl.current) { URL.revokeObjectURL(pendingAudioUrl.current); pendingAudioUrl.current = null }
 
@@ -190,19 +254,27 @@ export default function CallMode({ onExit }) {
       const rawText = data.text || ''
       messagesRef.current = [...newMessages, { role: 'assistant', content: rawText }]
 
-      const { display, spoken } = parseAgentResponse(rawText)
-      setDisplayText(display)
-      pendingSpoken.current = spoken
-      setPhase('answered')
+      const segs = parseToSegments(rawText)
+      segmentsRef.current = segs
+      segIdxRef.current = 0
 
-      // Pre-fetch TTS audio in background — will be ready by the time user taps Play
-      prefetchTTS(spoken)
+      const seg = segs[0]
+      const stepCount = segs.filter(s => s.type === 'step').length
+      setSegPos({ idx: 0, total: segs.length, type: seg.type, stepNum: seg.stepNum, stepCount })
+      setTtsReady(false)
+      setPhase('ready')
+
+      // Pre-fetch first segment's audio
+      prefetchTTS(seg.ttsText)
     } catch (err) {
       clearTimeout(timeout)
-      setDisplayText(err.name === 'AbortError'
-        ? 'Request timed out. Please try again.'
-        : 'Sorry, I had trouble connecting. Please try again.')
       setPhase('idle')
+      // Show brief error — reuse segPos display for one-off messages
+      segmentsRef.current = [{ type: 'single', ttsText: err.name === 'AbortError' ? 'Request timed out. Please try again.' : 'Sorry, trouble connecting. Please try again.' }]
+      segIdxRef.current = 0
+      setSegPos({ idx: 0, total: 1, type: 'single' })
+      setTtsReady(true)
+      setPhase('ready')
     }
   }
 
@@ -210,7 +282,6 @@ export default function CallMode({ onExit }) {
     e.preventDefault()
     if (pressingRef.current || phase === 'processing' || phase === 'speaking') return
 
-    // Cancel any ongoing audio
     if (audioElRef.current) { audioElRef.current.pause(); audioElRef.current.src = '' }
     window.speechSynthesis?.cancel()
 
@@ -253,24 +324,45 @@ export default function CallMode({ onExit }) {
     }, 200)
   }
 
-  const isAnswered = phase === 'answered'
+  // Derive position label for display
+  function getPositionLabel() {
+    if (!segPos) return null
+    const { type, stepNum, stepCount, total } = segPos
+    if (total === 1) return null
+    if (type === 'intro') return `Overview · ${stepCount} step${stepCount !== 1 ? 's' : ''} follow`
+    if (type === 'step') return `Step ${stepNum} of ${stepCount}`
+    return null
+  }
+
+  function getPlayLabel() {
+    if (!ttsReady) return 'Loading…'
+    if (!segPos) return '▶  Play'
+    const { type, stepNum } = segPos
+    if (type === 'intro') return '▶  Play overview'
+    if (type === 'step') return `▶  Play step ${stepNum}`
+    return '▶  Play answer'
+  }
+
+  const isReady = phase === 'ready'
   const pttDisabled = phase === 'processing' || phase === 'speaking'
 
   const phaseLabel = {
     idle:       'Hold to talk',
     listening:  'Listening…',
     processing: 'Thinking…',
-    answered:   'Hold to reply',
+    ready:      'Hold to ask a follow-up',
     speaking:   'Speaking…',
-  }[phase]
+  }[phase] ?? 'Hold to talk'
 
   const pttColor = {
     idle:       '#0066CC',
     listening:  '#ef4444',
     processing: '#64748b',
-    answered:   '#0066CC',
+    ready:      '#0066CC',
     speaking:   '#10b981',
-  }[phase]
+  }[phase] ?? '#0066CC'
+
+  const posLabel = getPositionLabel()
 
   return (
     <div className="call-container">
@@ -296,24 +388,22 @@ export default function CallMode({ onExit }) {
 
         <div className="call-body">
           {transcript && <p className="call-transcript">"{transcript}"</p>}
-          <p className={`call-agent-text${phase === 'speaking' ? ' call-agent-text--speaking' : ''}`}>
-            {displayText}
-          </p>
-          {isAnswered && (
-            <button
-              className="play-answer-btn"
-              onClick={handlePlayAnswer}
-              disabled={!ttsReady}
-            >
-              {ttsReady ? (
-                <>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M8 5v14l11-7z"/>
-                  </svg>
-                  Play answer
-                </>
-              ) : 'Loading audio…'}
-            </button>
+
+          {isReady && (
+            <div className="step-play-area">
+              {posLabel && <p className="step-position-label">{posLabel}</p>}
+              <button
+                className="play-answer-btn"
+                onClick={handlePlayStep}
+                disabled={!ttsReady}
+              >
+                {getPlayLabel()}
+              </button>
+            </div>
+          )}
+
+          {phase === 'speaking' && posLabel && (
+            <p className="step-position-label">{posLabel}</p>
           )}
         </div>
 

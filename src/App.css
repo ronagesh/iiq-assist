@@ -137,6 +137,21 @@
   color: #7dd3fc;
 }
 
+.step-play-area {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.step-position-label {
+  color: rgba(255,255,255,0.9);
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: 0.3px;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+}
+
 .play-answer-btn {
   display: inline-flex;
   align-items: center;
