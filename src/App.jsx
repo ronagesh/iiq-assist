@@ -177,13 +177,10 @@ export default function App() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [thread, loading])
 
-  // Focus the follow-up input when a question arrives
+  // Focus the reply input whenever the assistant responds
   useEffect(() => {
-    if (phase === 'chat') {
-      const last = thread[thread.length - 1]
-      if (last?.type === 'followUp') followUpRef.current?.focus()
-    }
-  }, [thread, phase])
+    if (isChat && !loading) followUpRef.current?.focus()
+  }, [thread, loading])
 
   // ── API call ───────────────────────────────────────────────────────────────
   async function callAPI(messages) {
@@ -291,7 +288,9 @@ export default function App() {
   }
 
   const isChat = phase === 'chat' || phase === 'done'
-  const awaitingFollowUp = phase === 'chat' && !loading && thread.length > 0 && thread[thread.length - 1]?.type === 'followUp'
+  const showReplyBar = isChat && !loading
+  const lastAssistant = [...thread].reverse().find(m => m.role === 'assistant')
+  const replyPlaceholder = lastAssistant?.type === 'followUp' ? 'Type your reply…' : 'Ask a follow-up…'
 
   return (
     <div className="app-container">
@@ -363,22 +362,19 @@ export default function App() {
             )}
             {loading && <LoadingBubble />}
             {error && <div className="error-banner">{error}</div>}
-            {phase === 'done' && (
-              <button className="new-issue-btn" onClick={reset}>Report another issue</button>
-            )}
             <div ref={bottomRef} />
           </div>
         )}
       </main>
 
-      {/* ── Sticky follow-up input bar ── */}
-      {awaitingFollowUp && (
+      {/* ── Sticky reply bar ── */}
+      {showReplyBar && (
         <div className="followup-bar">
           <form className="followup-form" onSubmit={handleFollowUpSubmit}>
             <input
               ref={followUpRef}
               className="followup-input"
-              placeholder="Type your reply…"
+              placeholder={replyPlaceholder}
               value={followUpInput}
               onChange={(e) => setFollowUpInput(e.target.value)}
               onKeyDown={handleFollowUpKeyDown}
@@ -390,6 +386,7 @@ export default function App() {
               </svg>
             </button>
           </form>
+          <button className="start-over-btn" onClick={reset}>Start over</button>
         </div>
       )}
     </div>
