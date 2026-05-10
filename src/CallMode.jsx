@@ -42,7 +42,19 @@ function parseAgentResponse(rawText) {
   return { display, spoken: rawText }
 }
 
-async function speakElevenLabs(text, audioRef, onEnd) {
+// Play audio through an already-unlocked AudioContext so iOS doesn't block it
+async function playViaAudioContext(arrayBuffer, audioCtx, sourceRef, onEnd) {
+  await audioCtx.resume()
+  const decoded = await audioCtx.decodeAudioData(arrayBuffer)
+  const source = audioCtx.createBufferSource()
+  source.buffer = decoded
+  source.connect(audioCtx.destination)
+  source.onended = () => onEnd?.()
+  sourceRef.current = source
+  source.start(0)
+}
+
+async function speakElevenLabs(text, audioCtxRef, sourceRef, onEnd) {
   try {
     const res = await fetch('/api/tts', {
       method: 'POST',
@@ -50,13 +62,8 @@ async function speakElevenLabs(text, audioRef, onEnd) {
       body: JSON.stringify({ text }),
     })
     if (!res.ok) throw new Error('TTS error')
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const audio = new Audio(url)
-    audioRef.current = audio
-    audio.onended  = () => { URL.revokeObjectURL(url); onEnd?.() }
-    audio.onerror  = () => { URL.revokeObjectURL(url); onEnd?.() }
-    await audio.play()
+    const arrayBuffer = await res.arrayBuffer()
+    await playViaAudioContext(arrayBuffer, audioCtxRef.current, sourceRef, onEnd)
   } catch {
     // Fallback to browser TTS
     const clean = stripMarkdown(text).replace(/\n+/g, ' ')
@@ -79,7 +86,8 @@ export default function CallMode({ onExit }) {
   const transcriptRef  = useRef('')
   const frameRef       = useRef(null)
   const pressingRef    = useRef(false)
-  const audioRef       = useRef(null)
+  const audioCtxRef    = useRef(null)   // unlocked on first press
+  const sourceRef      = useRef(null)   // current AudioBufferSourceNode
   const messagesRef    = useRef([])
 
   const [phase, setPhase]           = useState('idle')
@@ -105,7 +113,8 @@ export default function CallMode({ onExit }) {
     return () => {
       streamRef.current?.getTracks().forEach(t => t.stop())
       window.speechSynthesis?.cancel()
-      audioRef.current?.pause()
+      sourceRef.current?.stop()
+      audioCtxRef.current?.close()
       recognitionRef.current?.abort()
     }
   }, [])
@@ -146,7 +155,7 @@ export default function CallMode({ onExit }) {
       const { display, spoken } = parseAgentResponse(rawText)
       setDisplayText(display)
       setPhase('speaking')
-      speakElevenLabs(spoken, audioRef, () => setPhase('idle'))
+      speakElevenLabs(spoken, audioCtxRef, sourceRef, () => setPhase('idle'))
     } catch (err) {
       setDisplayText('Sorry, I had trouble connecting. Please try again.')
       setPhase('idle')
@@ -157,8 +166,14 @@ export default function CallMode({ onExit }) {
     e.preventDefault()
     if (pressingRef.current || phase === 'processing') return
 
+    // Unlock / create AudioContext on the user gesture so iOS allows playback later
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)()
+    }
+    audioCtxRef.current.resume()
+
     // Stop any ongoing speech
-    audioRef.current?.pause()
+    sourceRef.current?.stop()
     window.speechSynthesis?.cancel()
 
     pressingRef.current = true

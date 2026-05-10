@@ -1,4 +1,4 @@
-const VOICE_ID = 'EXAVITQu4vr4xnSDxMaL' // Sarah — natural, clear
+const VOICE_ID = 'XB0fDUnXU5powFXDhCwa' // Charlotte — British, warm
 
 function cleanForSpeech(text) {
   let clean = text
