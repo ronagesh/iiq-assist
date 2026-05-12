@@ -181,8 +181,8 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  background: rgba(16, 185, 129, 0.2);
-  border: 1.5px solid rgba(16, 185, 129, 0.7);
+  background: #10b981;
+  border: none;
   color: #fff;
   font-size: 15px;
   font-weight: 600;
@@ -190,12 +190,13 @@
   padding: 11px 22px;
   border-radius: 999px;
   cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.3);
   transition: background 0.15s, transform 0.1s;
   align-self: flex-start;
 }
 .resolve-btn:active {
   transform: scale(0.96);
-  background: rgba(16, 185, 129, 0.35);
+  background: #059669;
 }
 
 .call-controls {
