@@ -417,6 +417,17 @@ export default function CallMode({ onExit }) {
           {phase === 'speaking' && posLabel && (
             <p className="step-position-label">{posLabel}</p>
           )}
+
+          {(isReady || phase === 'speaking') && (
+            <button
+              className="resolve-btn"
+              onClick={onExit}
+              onTouchStart={e => e.stopPropagation()}
+              onTouchEnd={e => e.stopPropagation()}
+            >
+              ✓ That worked, thanks!
+            </button>
+          )}
         </div>
 
         <div className="call-controls">
