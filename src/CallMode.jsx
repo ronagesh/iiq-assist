@@ -70,6 +70,7 @@ export default function CallMode({ onExit }) {
   const segIdxRef       = useRef(0)
   const messagesRef     = useRef([])
   const playTappedRef   = useRef(false)   // guard: ignore PTT for 600ms after Play tap
+  const autoPlayRef     = useRef(false)   // auto-play next ready segment (e.g. after "That didn't work")
 
   const [phase, setPhase]         = useState('idle')
   const [transcript, setTranscript] = useState('')
@@ -198,11 +199,7 @@ export default function CallMode({ onExit }) {
     setPhase('ready')
   }
 
-  // Called from Play button — direct user gesture, iOS allows audio.play() here
-  function handlePlayStep(e) {
-    e.stopPropagation()
-    playTappedRef.current = true
-    setTimeout(() => { playTappedRef.current = false }, 600)
+  function playCurrentSegment() {
     const idx = segIdxRef.current
     const segs = segmentsRef.current
     const seg = segs[idx]
@@ -210,11 +207,8 @@ export default function CallMode({ onExit }) {
 
     setPhase('speaking')
 
-    // Best-effort pre-fetch of next segment while this one plays
     const nextIdx = idx + 1
-    if (nextIdx < segs.length) {
-      prefetchTTS(segs[nextIdx].ttsText)
-    }
+    if (nextIdx < segs.length) prefetchTTS(segs[nextIdx].ttsText)
 
     const blobUrl = pendingAudioUrl.current
     pendingAudioUrl.current = null
@@ -233,10 +227,27 @@ export default function CallMode({ onExit }) {
     }
   }
 
+  // Called from Play button — direct user gesture, iOS allows audio.play() here
+  function handlePlayStep(e) {
+    e.stopPropagation()
+    playTappedRef.current = true
+    setTimeout(() => { playTappedRef.current = false }, 600)
+    playCurrentSegment()
+  }
+
   function handleDidntWork(e) {
     e.stopPropagation()
+    autoPlayRef.current = true
     sendToAgent("I tried all the steps and none of them worked. Please file a support ticket.")
   }
+
+  // Auto-play ticket audio after "That didn't work" — audio element is already unlocked from prior taps
+  useEffect(() => {
+    if (autoPlayRef.current && phase === 'ready' && !audioFetching) {
+      autoPlayRef.current = false
+      playCurrentSegment()
+    }
+  }, [phase, audioFetching])
 
   async function sendToAgent(spokenText, frameBase64) {
     setPhase('processing')
