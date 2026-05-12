@@ -17,7 +17,7 @@ function parseToSegments(rawText) {
     if (m) {
       const j = JSON.parse(m[0])
       if (j.ticket) {
-        return [{ type: 'single', ttsText: `I've created a support ticket. ${j.summary}. Priority: ${j.priority}. ${j.recommendedAction}. Estimated resolution: ${j.estimatedResolution}.` }]
+        return [{ type: 'single', ttsText: `Ticket filed. ${j.priority} priority — ${j.summary}. Estimated resolution: ${j.estimatedResolution}.` }]
       }
       if (j.followUp) return [{ type: 'single', ttsText: j.question }]
     }
@@ -76,6 +76,7 @@ export default function CallMode({ onExit }) {
   const [transcript, setTranscript] = useState('')
   const [ttsReady, setTtsReady]   = useState(false)
   const [audioFetching, setAudioFetching] = useState(false)
+  const [autoPlay, setAutoPlay]   = useState(false)
   // { idx, total, type, stepNum } — drives position indicator, no text shown
   const [segPos, setSegPos]       = useState(null)
   const [camError, setCamError]   = useState(null)
@@ -238,6 +239,7 @@ export default function CallMode({ onExit }) {
   function handleDidntWork(e) {
     e.stopPropagation()
     autoPlayRef.current = true
+    setAutoPlay(true)
     sendToAgent("I tried all the steps and none of them worked. Please file a support ticket.")
   }
 
@@ -245,6 +247,7 @@ export default function CallMode({ onExit }) {
   useEffect(() => {
     if (autoPlayRef.current && phase === 'ready' && !audioFetching) {
       autoPlayRef.current = false
+      setAutoPlay(false)
       playCurrentSegment()
     }
   }, [phase, audioFetching])
@@ -416,7 +419,7 @@ export default function CallMode({ onExit }) {
         <div className="call-body">
           {transcript && <p className="call-transcript">"{transcript}"</p>}
 
-          {isReady && (
+          {isReady && !autoPlay && (
             <div className="step-play-area">
               {posLabel && <p className="step-position-label">{posLabel}</p>}
               <button
