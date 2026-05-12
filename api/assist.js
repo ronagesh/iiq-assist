@@ -66,6 +66,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing messages array' })
   }
 
+  // Strip images from all but the first user message — only the initial frame matters for diagnosis
+  const trimmedMessages = messages.map((msg, i) => {
+    const isFirstUser = i === 0 && msg.role === 'user'
+    if (!isFirstUser && Array.isArray(msg.content)) {
+      const textOnly = msg.content.filter(c => c.type !== 'image')
+      return { ...msg, content: textOnly.length === 1 ? textOnly[0].text : textOnly }
+    }
+    return msg
+  })
+
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' })
@@ -80,10 +90,10 @@ export default async function handler(req, res) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 1024,
         system: SYSTEM_PROMPT,
-        messages,
+        messages: trimmedMessages,
       }),
     })
 
