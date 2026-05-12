@@ -1,5 +1,34 @@
 import knowledgeBase from '../src/knowledgeBase.js'
 
+// Score a KB entry against user text — count matching keywords
+function scoreEntry(entry, userText) {
+  const normalise = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ')
+  const words = normalise(userText).split(/\s+/).filter(w => w.length > 2)
+  const haystack = normalise([entry.issue, entry.symptoms, entry.device_or_asset, entry.category].join(' '))
+  return words.filter(w => haystack.includes(w)).length
+}
+
+// Return the top N matching KB entries, or all if nothing scores
+function filterKB(userText, n = 3) {
+  if (!userText.trim()) return knowledgeBase
+  const scored = knowledgeBase
+    .map(entry => ({ entry, score: scoreEntry(entry, userText) }))
+    .sort((a, b) => b.score - a.score)
+  const top = scored.slice(0, n).filter(s => s.score > 0)
+  return top.length > 0 ? top.map(s => s.entry) : knowledgeBase
+}
+
+// Extract plain text from the first user message (may be string or content array)
+function extractFirstUserText(messages) {
+  const first = messages.find(m => m.role === 'user')
+  if (!first) return ''
+  if (typeof first.content === 'string') return first.content
+  if (Array.isArray(first.content)) {
+    return first.content.filter(c => c.type === 'text').map(c => c.text).join(' ')
+  }
+  return ''
+}
+
 function buildSystemPrompt(kb) {
   const kbText = kb.map((entry, i) => {
     const steps = entry.resolution_steps.map((s, j) => `    ${j + 1}. ${s}`).join('\n')
@@ -17,17 +46,18 @@ Escalate if: ${entry.escalate_if}`
 ## CRITICAL RULES
 - Never open your response by describing or repeating what is visible in the photo or the user's message. The user can already see their screen. Jump straight to your answer.
 - Never mention "knowledge base", "I found a match", "based on our records", or how you looked up the answer.
+- For resolutions: copy the steps EXACTLY as written below — do not rephrase, reorder, skip, or combine any steps.
 
 ## HOW TO RESPOND
 
 Evaluate the description and any photo provided, then choose one of three response types:
 
 ### 1. RESOLUTION — issue can be self-fixed by the teacher
-Use this when a knowledge base entry matches and has self-service steps — even if the photo or error message looks serious. Default to resolution steps first. The teacher may not have tried them yet.
-Format: plain text. Give ALL numbered steps from the matching KB entry without skipping, combining, or summarizing any. Plain English, no jargon.
+Use this when a KB entry below matches. Default to resolution steps first — the teacher may not have tried them yet.
+Format: plain text. Copy ALL numbered steps from the matching entry word for word. Do not skip, combine, summarize, or rewrite any step.
 
 ### 2. TICKET — issue requires physical intervention or IT/facilities staff
-Only use this when the issue CANNOT be resolved by the teacher themselves, regardless of steps. This means:
+Only use this when the issue CANNOT be resolved by the teacher themselves. This means:
 - Physical damage (cracked screen, broken hardware, water damage)
 - Facilities issues (HVAC, plumbing, electrical, structural)
 - Safety hazards
@@ -49,16 +79,14 @@ Rules for follow-up questions:
 
 ## DECISION LOGIC
 1. If a photo is provided: read EVERY piece of text visible in the image before deciding anything. Note error codes, device names, counts, room numbers, status messages — all of it. Do not ask a follow-up question about information that is already visible in the photo.
-2. Match description + photo against the knowledge base below.
+2. Match description + photo against the KB entries below.
 3. If a KB entry matches: ALWAYS give the resolution steps first, unless the issue is clearly physical damage or a facilities problem.
 4. Only escalate to a ticket if: (a) it's physical/facilities, or (b) the user says the steps didn't work.
 5. If no KB entry matches and description is vague: ask a follow-up question.
 
-## KNOWLEDGE BASE
+## RELEVANT KB ENTRIES
 ${kbText}`
 }
-
-const SYSTEM_PROMPT = buildSystemPrompt(knowledgeBase)
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -85,6 +113,10 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' })
   }
 
+  const firstUserText = extractFirstUserText(messages)
+  const relevantKB = filterKB(firstUserText)
+  const systemPrompt = buildSystemPrompt(relevantKB)
+
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -97,7 +129,7 @@ export default async function handler(req, res) {
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 1024,
         temperature: 0,
-        system: SYSTEM_PROMPT,
+        system: systemPrompt,
         messages: trimmedMessages,
       }),
     })
