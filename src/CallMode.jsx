@@ -180,14 +180,14 @@ export default function CallMode({ onExit }) {
     }
   }
 
-  // Advance to segment at idx, or return to idle if past the end
+  // Advance to segment at idx, or go to 'done' if past the end
   function advanceToSegment(idx) {
     const segs = segmentsRef.current
     if (idx >= segs.length) {
       segIdxRef.current = 0
       segmentsRef.current = []
       setSegPos(null)
-      setPhase('idle')
+      setPhase('done')
       return
     }
     segIdxRef.current = idx
@@ -231,6 +231,11 @@ export default function CallMode({ onExit }) {
     } else {
       speakFallback(seg.ttsText, onDone)
     }
+  }
+
+  function handleDidntWork(e) {
+    e.stopPropagation()
+    sendToAgent("I tried all the steps and none of them worked. Please file a support ticket.")
   }
 
   async function sendToAgent(spokenText, frameBase64) {
@@ -362,6 +367,7 @@ export default function CallMode({ onExit }) {
     processing: 'Thinking…',
     ready:      'Hold to ask a follow-up',
     speaking:   'Speaking…',
+    done:       'Hold to ask a follow-up',
   }[phase] ?? 'Hold to talk'
 
   const pttColor = {
@@ -421,7 +427,7 @@ export default function CallMode({ onExit }) {
         </div>
 
         <div className="call-controls">
-          {(isReady || phase === 'speaking') && (
+          {(isReady || phase === 'speaking' || phase === 'done') && (
             <button
               className="resolve-btn"
               onClick={onExit}
@@ -429,6 +435,16 @@ export default function CallMode({ onExit }) {
               onTouchEnd={e => e.stopPropagation()}
             >
               ✓ That worked, thanks!
+            </button>
+          )}
+          {phase === 'done' && (
+            <button
+              className="escalate-btn"
+              onClick={handleDidntWork}
+              onTouchStart={e => e.stopPropagation()}
+              onTouchEnd={e => e.stopPropagation()}
+            >
+              That didn't work
             </button>
           )}
           <p className="call-phase-label">{phaseLabel}</p>
