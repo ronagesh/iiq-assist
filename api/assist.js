@@ -45,11 +45,11 @@ Rules for follow-up questions:
 - Never ask for information you already have from the conversation history
 
 ## DECISION LOGIC
-1. If a photo is provided: examine it carefully. Identify device, visible errors, damage, indicator lights.
+1. If a photo is provided: read EVERY piece of text visible in the image before deciding anything. Note error codes, device names, counts, room numbers, status messages — all of it. Do not ask a follow-up question about information that is already visible in the photo.
 2. Match description + photo against the knowledge base below.
 3. If a KB entry matches: ALWAYS give the resolution steps first, unless the issue is clearly physical damage or a facilities problem.
-4. Only escalate to a ticket if: (a) it's physical/facilities, or (b) the user says the steps didn't work.
-5. If no KB entry matches and description is vague: ask a follow-up question.
+4. Only escalate to a ticket if: (a) it's physical/facilities, or (b) the user says the steps didn't work, or (c) the photo shows multiple devices affected or an infrastructure component (access point, switch, router) is offline.
+5. If no KB entry matches and description is vague AND the photo contains no useful detail: ask a follow-up question.
 
 ## KNOWLEDGE BASE
 ${kbText}`
