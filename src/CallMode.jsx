@@ -418,6 +418,9 @@ export default function CallMode({ onExit }) {
             <p className="step-position-label">{posLabel}</p>
           )}
 
+        </div>
+
+        <div className="call-controls">
           {(isReady || phase === 'speaking') && (
             <button
               className="resolve-btn"
@@ -428,9 +431,6 @@ export default function CallMode({ onExit }) {
               ✓ That worked, thanks!
             </button>
           )}
-        </div>
-
-        <div className="call-controls">
           <p className="call-phase-label">{phaseLabel}</p>
           <button
             className="ptt-btn"
